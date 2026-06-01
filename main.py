@@ -1,5 +1,4 @@
 import sys
-import uuid
 from datetime import datetime
 from config import settings
 from models import SessionState, AgentAction
@@ -7,125 +6,134 @@ from memory import SessionMemoryManager
 from scanner import NetworkScanner
 from agent import CyberGuardAgent
 
-# Import the actual security tool functions we built
+# Import core tools
 from tools.banner_grab import grab_banner
 from tools.cve_lookup import lookup_cve
 from tools.exploit_suggest import suggest_exploit
 
+# Import Rich components for elite CLI UX
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.live import Live
+from rich.spinner import Spinner
+
+console = Console()
+
 def run_autonomous_assessment(target: str, max_turns: int = 5):
     """
-    Orchestrates the entire end-to-end lifecycle of CyberGuard AI.
-    Runs the initial network scan, binds tools to the Gemini reasoning engine,
-    tracks state execution loops, and outputs the final markdown audit report.
+    Orchestrates the entire end-to-end lifecycle of CyberGuard AI with an enhanced Rich CLI view.
     """
-    # 1. Establish unique tracking signatures
     session_id = f"cg-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
-    print(f"[+] Initializing CyberGuard AI Autonomous Session: {session_id}")
-    print(f"[*] Target Asset Scoped: {target}")
-    print("-" * 60)
+    
+    # Render a beautiful tool banner
+    console.print(Panel.fit(
+        f"[bold cyan]CyberGuard AI — Autonomous Penetration Testing Agent[/bold cyan]\n"
+        f"[bold white]Session ID:[/bold white] [yellow]{session_id}[/yellow] | [bold white]Target Scoped:[/bold white] [green]{target}[/green]",
+        border_style="magenta"
+    ))
 
-    # 2. Instantiate foundational layers
     memory_mgr = SessionMemoryManager(session_id=session_id, target=target)
     session_state = memory_mgr.load_session()
     
-    # 3. Step 1: Execute the initial sensory network discovery scan
-    scanner = NetworkScanner(target=target)
-    scan_results = scanner.run_port_scan(ports="21,22,80,443,8080")
+    # 1. Active Scan Phase with a live text status spinner
+    with console.status(f"[bold yellow]Running initial sensory Nmap scan on target {target}...[/bold yellow]", spinner="bouncingBar"):
+        scanner = NetworkScanner(target=target)
+        scan_results = scanner.run_port_scan(ports="21,22,80,443,8080")
     
-    # Save discovery results straight to state
     session_state.discovered_host_info = scan_results
     memory_mgr.save_session(session_state)
     
     if scan_results.status == "down" or not scan_results.open_ports:
-        print("[!] Target appears down or no common open ports discovered. Concluding assessment early.")
+        console.print(f"[bold red][!] Target host appears down or completely closed. Generating quick exit report...[/bold red]")
         from reporter import SecurityReporter
-        reporter = SecurityReporter(session_state)
-        reporter.generate_markdown_report()
+        SecurityReporter(session_state).generate_markdown_report()
         return
 
-    # 4. Step 2: Initialize Brain Engine and link real functional execution tools
-    agent = CyberGuardAgent(target=target)
+    # Render a clean table of discovered ports immediately
+    port_table = Table(title="Exposed Attack Surface Discovery", title_style="bold cyan")
+    port_table.add_column("Port", style="yellow")
+    port_table.add_column("Protocol", style="green")
+    port_table.add_column("State", style="bold red")
+    port_table.add_column("Identified Service", style="white")
     
-    # Registering tools matching the core keywords the LLM expects
+    for port in scan_results.open_ports:
+        port_table.add_row(str(port.port), port.protocol.upper(), port.state, port.service)
+    console.print(port_table)
+
+    # 2. Wire up the AI Core Agent
+    agent = CyberGuardAgent(target=target)
     agent.register_tool("grab_banner", grab_banner)
     agent.register_tool("lookup_cve", lookup_cve)
     agent.register_tool("suggest_exploit", suggest_exploit)
 
-    print(f"[+] Operational tools linked to Gemini Brain: {list(agent.tool_registry.keys())}")
-    print("-" * 60)
+    console.print(f"\n[bold green][+][/bold green] Operational tools safely linked to Gemini Brain framework.\n")
 
-    # 5. Core Autonomous Step Loop
+    # 3. Autonomous Execution Loop
     turn = 0
     while turn < max_turns:
         turn += 1
-        print(f"\n[*] --- Starting Autonomous Turn {turn} of {max_turns} ---")
+        console.print(f"\n[bold magenta]====== Autonomous Turn {turn} of {max_turns} ======[/bold magenta]")
         
-        # Run a reasoning step (Contact Gemini)
-        proposed_action = agent.run_reasoning_step(session_state)
-        
-        # If Gemini returned no function calls, it has finished analyzing or hit a natural stop
+        with console.status("[bold cyan]Agent is analyzing logs and calculating next move via Gemini API...[/bold cyan]", spinner="dots"):
+            proposed_action = agent.run_reasoning_step(session_state)
+            
         if not proposed_action:
-            print("[+] Brain indicated analysis completeness. Exiting reasoning loop.")
+            console.print("[bold green][✓] Brain indicated assessment completeness. Ending execution loop.[/bold green]")
             break
             
         tool_name = proposed_action.tool_name
         tool_args = proposed_action.arguments
         
-        # Guard rail: Make sure the chosen tool actually exists in our dictionary registry
+        console.print(f"[bold yellow][➔] Brain Decision:[/bold yellow] Invoke tool [bold green]'{tool_name}'[/bold green] on arguments [cyan]{tool_args}[/cyan]")
+        
+        # Tool routing and execution handler
         if tool_name in agent.tool_registry:
             try:
-                # Dynamically retrieve and run the tool function passing arguments securely
-                # Filter arguments to dynamically prevent unexpected parameters blowing up the tool
                 execution_func = agent.tool_registry[tool_name]
                 
-                # Execute the real python tool function
-                if tool_name == "grab_banner":
-                    # Fall back to standard defaults if LLM drops required keys
-                    p = int(tool_args.get("port", 22))
-                    raw_result = execution_func(target=target, port=p)
-                elif tool_name == "lookup_cve":
-                    cve = str(tool_args.get("cve_id", ""))
-                    raw_result = execution_func(cve_id=cve)
-                elif tool_name == "suggest_exploit":
-                    summary = str(tool_args.get("service_summary", "Generic network endpoint"))
-                    raw_result = execution_func(service_summary=summary)
-                else:
-                    raw_result = "Tool format configuration mismatched."
+                with console.status(f"[bold red]Executing functional hardware tool: {tool_name}...[/bold red]", spinner="binary"):
+                    if tool_name == "grab_banner":
+                        p = int(tool_args.get("port", 22))
+                        raw_result = execution_func(target=target, port=p)
+                    elif tool_name == "lookup_cve":
+                        cve = str(tool_args.get("cve_id", ""))
+                        raw_result = execution_func(cve_id=cve)
+                    elif tool_name == "suggest_exploit":
+                        summary = str(tool_args.get("service_summary", "Generic endpoint"))
+                        raw_result = execution_func(service_summary=summary)
+                    else:
+                        raw_result = "Configuration mismatched."
 
-                # Update the action record with the real output findings
                 proposed_action.result_summary = raw_result
-                print(f"[+] Tool executed successfully. Summary gathered.")
+                console.print(Panel(f"[dim white]{raw_result.strip()}[/dim white]", title=f"Result Extract: {tool_name}", border_style="green"))
 
-                # If a banner was grabbed, inject a helpful high-level note to the structural findings summary
                 if tool_name == "grab_banner" and "Error" not in raw_result:
                     session_state.findings_summary.append(f"Successfully grabbed banner on port {tool_args.get('port')}: {raw_result}")
 
             except Exception as e:
-                proposed_action.result_summary = f"Execution error running tool handler: {str(e)}"
-                print(f"[!] Tool execution crash: {e}")
+                proposed_action.result_summary = f"Execution error: {str(e)}"
+                console.print(f"[bold red][!] Tool crashed during execution: {e}[/bold red]")
         else:
-            proposed_action.result_summary = f"Error: Tool '{tool_name}' is not registered within this agent's chassis."
-            print(f"[!] Brain attempted to access unregistered tool: {tool_name}")
+            proposed_action.result_summary = f"Error: Tool '{tool_name}' is not registered."
+            console.print(f"[bold red][!] Attempted to run unregistered tool: {tool_name}[/bold red]")
 
-        # Record this action turn permanently to memory state so Gemini sees it on next loop iteration
         session_state.actions_taken.append(proposed_action)
         memory_mgr.save_session(session_state)
-        
-        # Small defensive separator
-        print("-" * 40)
 
-    # 6. Step 3: Assessment complete! Compile the final executive report artifact
-    print("\n" + "="*60)
-    print("[+] Autonomous cycle concluded. Triggering document serialization...")
-    from reporter import SecurityReporter
-    reporter = SecurityReporter(session_state)
-    final_report_path = reporter.generate_markdown_report()
-    print(f"[+] Process complete. Final Report Asset: {final_report_path}")
-    print("="*60)
+    # 4. Compile the Final Asset Document
+    console.print("\n" + "="*60)
+    with console.status("[bold green]Compiling professional security audit report...[/bold green]", spinner="aesthetic"):
+        from reporter import SecurityReporter
+        final_report_path = SecurityReporter(session_state).generate_markdown_report()
+        
+    console.print(Panel(
+        f"[bold green][✓] Process Complete![/bold green]\n"
+        f"Final Open-Source Report generated successfully at:\n"
+        f"[bold yellow]{final_report_path}[/bold yellow]",
+        title="Report Finalized", border_style="cyan"
+    ))
 
 if __name__ == "__main__":
-    # Target fallback logic: use user args if passed, else fallback safely to localhost configuration
     target_to_test = sys.argv[1] if len(sys.argv) > 1 else settings.DEFAULT_TARGET
-    
-    print("[*] CyberGuard AI Shell Active.")
     run_autonomous_assessment(target=target_to_test)
