@@ -1,5 +1,10 @@
+
+
 ```markdown
 # CyberGuard AI 🛡️🤖
+
+
+---
 
 [![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Framework](https://img.shields.io/badge/Validation-Pydantic%20v2-red.svg)](https://docs.pydantic.dev/)
@@ -144,5 +149,8 @@ python main.py 127.0.0.1
 * Keep generated audit data outputs completely protected on your system; compiled intelligence metrics could give unauthorized vectors an optimized layout mapping of the target topology.
 
 ```
+> ⚠️ **Status:** Active Development | **Built by:** Sonia Nanwani
+> **Academic Profile:** Third Year CSE @ Walchand College of Engineering, Sangli | IIT Madras BS Data Science
 
-```
+---
+
